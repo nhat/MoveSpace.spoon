@@ -10,22 +10,8 @@ obj.license = "MIT"
 -- Dependencies
 local hotkey = require "hs.hotkey"
 local window = require "hs.window"
-local hse, hsee, hst = hs.eventtap, hs.eventtap.event, hs.timer
 local spaces = require "hs.spaces"
-
--- Helper functions
-local function flashScreen(screen)
-  local flash =
-    hs.canvas.new(screen:fullFrame()):appendElements(
-    {
-      action = "fill",
-      fillColor = {alpha = 0.35, red = 0.6, green = 0.6, blue = 0.6},
-      type = "rectangle"
-    }
-  )
-  flash:show()
-  hs.timer.doAfter( 0.25, function() flash:delete() end)
-end
+local hse, hsee, hst = hs.eventtap, hs.eventtap.event, hs.timer
 
 local function switchSpace(skip, dir)
   for i = 1, skip do
@@ -77,15 +63,14 @@ function obj.moveWindowOneSpace(dir)
   else
     initialSpace = initialSpace[1]
   end
-  local currentCursor = hs.mouse.getRelativePosition()
 
-  if (dir == "right" and initialSpace == userSpaces[#userSpaces]) or (dir == "left" and initialSpace == userSpaces[1]) then
-    flashScreen(screen)
-  else
+  if not ((dir == "right" and initialSpace == userSpaces[#userSpaces]) or (dir == "left" and initialSpace == userSpaces[1])) then
+    local currentCursor = hs.mouse.getRelativePosition()
     local zoomPoint = hs.geometry(win:zoomButtonRect())
     local safePoint = zoomPoint:move({-1, -1}).topleft
     hsee.newMouseEvent(hsee.types.leftMouseDown, safePoint):post()
     switchSpace(1, dir)
+
     hst.waitUntil(
       function()
         return spaces.windowSpaces(win)[1] ~= initialSpace
