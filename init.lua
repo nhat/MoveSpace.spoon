@@ -3,7 +3,7 @@ obj.__index = obj
 
 -- Metadata
 obj.name = "MoveSpace"
-obj.version = "1.0"
+obj.version = "1.2"
 obj.author = "Converted from user script"
 obj.license = "MIT"
 
@@ -27,13 +27,9 @@ local needsDragForSpaceMoveBundleIDs = {
 }
 
 local function needsDragForSpaceMove(win)
-  if not win then
-    return false
-  end
+  if not win then return false end
   local app = win:application()
-  if not app then
-    return false
-  end
+  if not app then return false end
   return needsDragForSpaceMoveBundleIDs[app:bundleID()] or false
 end
 
@@ -45,31 +41,30 @@ end
 
 local function getGoodFocusedWindow(nofull)
   local win = window.focusedWindow()
-  if not win or not win:isStandard() then
-    return
-  end
-  if nofull and win:isFullScreen() then
-    return
-  end
+  if not win or not win:isStandard() then return end
+  if nofull and win:isFullScreen() then return end
   return win
 end
 
--- Enhanced drag for non-standard apps
+-- Simulate a drag with no movement for workaround apps
 local function simulateWindowDrag(win)
   local zoomRect = hs.geometry(win:zoomButtonRect())
   local dragStart = zoomRect:move({15, -1}).topleft
-  local dragEnd = {x = dragStart.x + 1, y = dragStart.y}
-  -- Mouse down at dragStart
+  -- Drag ends at the same place as start (no-move drag)
+  local dragEnd = {x = dragStart.x, y = dragStart.y}
   hsee.newMouseEvent(hsee.types.leftMouseDown, dragStart):post()
   hs.timer.usleep(15000)
   hsee.newMouseEvent(hsee.types.leftMouseDragged, dragEnd):post()
   hs.timer.usleep(15000)
-  return dragEnd
+  return dragEnd, dragStart
 end
 
 function obj.moveWindowOneSpace(dir)
   local win = getGoodFocusedWindow(true)
   if not win then return end
+
+  -- Unset sticky if needed (visible on all spaces)
+  if win.isSticky and win:isSticky() then win:setSticky(false) end
 
   local screen = win:screen()
   local uuid = screen:getUUID()
@@ -79,6 +74,7 @@ function obj.moveWindowOneSpace(dir)
     if k == uuid then break end
   end
   if not userSpaces then return end
+
   for i = #userSpaces, 1, -1 do
     if spaces.spaceType(userSpaces[i]) ~= "user" then
       table.remove(userSpaces, i)
@@ -91,11 +87,10 @@ function obj.moveWindowOneSpace(dir)
 
   if not ((dir == "right" and initialSpace == userSpaces[#userSpaces]) or (dir == "left" and initialSpace == userSpaces[1])) then
     local currentCursor = hs.mouse.getRelativePosition()
-    local dragEnd = nil
-    local dragStart = nil
+    local dragEnd, dragStart
 
     if needsDragForSpaceMove(win) then
-      dragEnd = simulateWindowDrag(win)
+      dragEnd, dragStart = simulateWindowDrag(win)
     else
       local zoomRect = hs.geometry(win:zoomButtonRect())
       dragStart = zoomRect:move({15, -1}).topleft
@@ -107,7 +102,7 @@ function obj.moveWindowOneSpace(dir)
     hst.waitUntil(
       function() return spaces.windowSpaces(win)[1] ~= initialSpace end,
       function()
-        hs.timer.usleep(10000)
+        hs.timer.usleep(10000) -- Pause to ensure space switch is complete
         if needsDragForSpaceMove(win) and dragEnd then
           hsee.newMouseEvent(hsee.types.leftMouseUp, dragEnd):post()
         else
@@ -122,9 +117,9 @@ end
 
 -- Spoon Initialization
 function obj:start()
-  mash = {"shift", "ctrl"}
-  hotkey.bind( mash, "2", function() obj.moveWindowOneSpace("right", true) end)
-  hotkey.bind( mash, "1", function() obj.moveWindowOneSpace("left", true) end)
+  local mash = {"shift", "ctrl"}
+  hotkey.bind(mash, "2", function() obj.moveWindowOneSpace("right", true) end)
+  hotkey.bind(mash, "1", function() obj.moveWindowOneSpace("left", true) end)
 end
 
 return obj
