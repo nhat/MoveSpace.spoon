@@ -33,6 +33,11 @@ local function needsDragForSpaceMove(win)
   return needsDragForSpaceMoveBundleIDs[app:bundleID()] or false
 end
 
+local function isSticky(win)
+  local spaceIDs = spaces.windowSpaces(win)
+  return type(spaceIDs) == "table" and #spaceIDs > 1
+end
+
 local function switchSpace(skip, dir)
   for i = 1, skip do
     hs.eventtap.keyStroke({"ctrl", "fn"}, dir, 0) -- "fn" is a bugfix!
@@ -63,8 +68,8 @@ function obj.moveWindowOneSpace(dir)
   local win = getGoodFocusedWindow(true)
   if not win then return end
 
-  -- Unset sticky if needed (visible on all spaces)
-  if win.isSticky and win:isSticky() then win:setSticky(false) end
+  -- Skip sticky windows (assigned to all spaces)
+  if isSticky(win) then return end
 
   local screen = win:screen()
   local uuid = screen:getUUID()
