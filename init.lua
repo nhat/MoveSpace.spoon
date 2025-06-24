@@ -21,7 +21,8 @@ local needsDragForSpaceMoveBundleIDs = {
   ["com.jetbrains.CLion"] = true,
   ["com.jetbrains.Rider"] = true,
   ["com.jetbrains.DataGrip"] = true,
-  ["com.jetbrains.RubyMine"] = true
+  ["com.jetbrains.RubyMine"] = true,
+  ["com.tinyspeck.slackmacgap"] = true,
   -- add more bundle IDs if needed
 }
 
@@ -53,80 +54,64 @@ local function getGoodFocusedWindow(nofull)
   return win
 end
 
--- Simulate a small drag on the window (mouseDown + mouseDragged + mouseUp)
+-- Enhanced drag for non-standard apps
 local function simulateWindowDrag(win)
   local zoomRect = hs.geometry(win:zoomButtonRect())
   local dragStart = zoomRect:move({15, -1}).topleft
   local dragEnd = {x = dragStart.x + 1, y = dragStart.y}
   -- Mouse down at dragStart
   hsee.newMouseEvent(hsee.types.leftMouseDown, dragStart):post()
-  -- Drag to dragEnd
+  hs.timer.usleep(15000)
   hsee.newMouseEvent(hsee.types.leftMouseDragged, dragEnd):post()
-  -- Return dragEnd for later use (release happens after space move)
+  hs.timer.usleep(15000)
   return dragEnd
 end
 
 function obj.moveWindowOneSpace(dir)
   local win = getGoodFocusedWindow(true)
-  if not win then
-    return
-  end
+  if not win then return end
 
   local screen = win:screen()
   local uuid = screen:getUUID()
   local userSpaces = nil
   for k, v in pairs(spaces.allSpaces()) do
     userSpaces = v
-    if k == uuid then
-      break
-    end
+    if k == uuid then break end
   end
-  if not userSpaces then
-    return
-  end
-
+  if not userSpaces then return end
   for i = #userSpaces, 1, -1 do
     if spaces.spaceType(userSpaces[i]) ~= "user" then
       table.remove(userSpaces, i)
     end
   end
-  if not userSpaces then
-    return
-  end
+  if not userSpaces then return end
 
   local initialSpace = spaces.windowSpaces(win)
-  if not initialSpace then
-    return
-  else
-    initialSpace = initialSpace[1]
-  end
+  if not initialSpace then return else initialSpace = initialSpace[1] end
 
   if not ((dir == "right" and initialSpace == userSpaces[#userSpaces]) or (dir == "left" and initialSpace == userSpaces[1])) then
     local currentCursor = hs.mouse.getRelativePosition()
-    local zoomRect = hs.geometry(win:zoomButtonRect())
-    local safePoint = zoomRect:move({15, -1}).topleft
-
     local dragEnd = nil
+    local dragStart = nil
+
     if needsDragForSpaceMove(win) then
-      -- Simulate a small drag for JetBrains IDEs etc.
       dragEnd = simulateWindowDrag(win)
     else
-      -- Default: just mouseDown on zoom button
-      hsee.newMouseEvent(hsee.types.leftMouseDown, safePoint):post()
+      local zoomRect = hs.geometry(win:zoomButtonRect())
+      dragStart = zoomRect:move({15, -1}).topleft
+      hsee.newMouseEvent(hsee.types.leftMouseDown, dragStart):post()
     end
 
     switchSpace(1, dir)
 
     hst.waitUntil(
+      function() return spaces.windowSpaces(win)[1] ~= initialSpace end,
       function()
-        return spaces.windowSpaces(win)[1] ~= initialSpace
-      end,
-      function()
-        -- Mouse up at dragEnd (if drag was simulated), otherwise at safePoint
+        hs.timer.usleep(10000)
         if needsDragForSpaceMove(win) and dragEnd then
           hsee.newMouseEvent(hsee.types.leftMouseUp, dragEnd):post()
         else
-          hsee.newMouseEvent(hsee.types.leftMouseUp, safePoint):post()
+          hsee.newMouseEvent(hsee.types.leftMouseUp, dragStart):post()
         end
         hs.mouse.setRelativePosition(currentCursor)
       end,
