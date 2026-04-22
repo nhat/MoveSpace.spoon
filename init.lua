@@ -6,49 +6,50 @@ handling apps that need special drag logic (Electron, JetBrains, Slack, etc).
 local obj = {}
 obj.__index = obj
 
--- Dependencies
 local hotkey = require "hs.hotkey"
 local window = require "hs.window"
 local spaces = require "hs.spaces"
-local hsee, hst = hs.eventtap.event, hs.timer
+local hsee = hs.eventtap.event
+local hst  = hs.timer
 
--- Bundles needing drag workaround
-local needsDragBundleIDs = {
-  ["com.jetbrains.intellij"] = true,
-  ["com.jetbrains.WebStorm"] = true,
-  ["com.jetbrains.PyCharm"] = true,
-  ["com.jetbrains.CLion"] = true,
-  ["com.jetbrains.Rider"] = true,
-  ["com.jetbrains.DataGrip"] = true,
-  ["com.jetbrains.RubyMine"] = true,
+-- Apps that need a zero-delta mouseDragged event to register the grab state
+local DRAG_BUNDLE_IDS = {
+  ["com.jetbrains.intellij"]    = true,
+  ["com.jetbrains.WebStorm"]    = true,
+  ["com.jetbrains.PyCharm"]     = true,
+  ["com.jetbrains.CLion"]       = true,
+  ["com.jetbrains.Rider"]       = true,
+  ["com.jetbrains.DataGrip"]    = true,
+  ["com.jetbrains.RubyMine"]    = true,
   ["com.tinyspeck.slackmacgap"] = true,
 }
 
--- Utilities
+-- Standard apps only need mouseDown held, but macOS must process it before the
+-- space switch fires — SWITCH_US is the gap that prevents the timing race.
+local GRAB_US       = 60000  -- µs between mouseDown and mouseDragged (drag apps only)
+local SWITCH_US     = 80000  -- µs between grab-complete and switchSpace (all apps)
+local RELEASE_US    = 20000  -- µs before mouseUp after window confirmed moved
+local POLL_INTERVAL = 0.05   -- s: polling frequency for window-moved check
+local POLL_TIMEOUT  = 2.0    -- s: give up if window hasn't moved
+
+local moveInProgress = false
+
 local function appNeedsDrag(win)
-  if not win then return false end
-  local app = win:application()
-  return app and needsDragBundleIDs[app:bundleID()] or false
+  local app = win and win:application()
+  return app and DRAG_BUNDLE_IDS[app:bundleID()] or false
 end
 
 local function windowIsSticky(win)
-  local spaceIDs = spaces.windowSpaces(win)
-  return type(spaceIDs) == "table" and #spaceIDs > 1
-end
-
-local function safeDragPoint(win)
-  local rect = hs.geometry(win:zoomButtonRect())
-  return rect:move({15, -1}).topleft
+  local ids = spaces.windowSpaces(win)
+  return type(ids) == "table" and #ids > 1
 end
 
 local function getUserSpaces(win)
-  local screen = win:screen()
-  local uuid = screen:getUUID()
-  local userSpaces = spaces.allSpaces()[uuid]
-  if not userSpaces then return nil end
-  -- Filter to user spaces only
+  local uuid = win:screen():getUUID()
+  local all  = spaces.allSpaces()[uuid]
+  if not all then return nil end
   local filtered = {}
-  for _, id in ipairs(userSpaces) do
+  for _, id in ipairs(all) do
     if spaces.spaceType(id) == "user" then table.insert(filtered, id) end
   end
   return filtered
@@ -60,68 +61,82 @@ local function getValidWindow()
   return win
 end
 
-local function simulateNoMoveDrag(point)
-  hsee.newMouseEvent(hsee.types.leftMouseDown, point):post()
-  hs.timer.usleep(15000)
-  hsee.newMouseEvent(hsee.types.leftMouseDragged, point):post()
-  hs.timer.usleep(15000)
-end
-
-local function simulateSimpleMouseDown(point)
-  hsee.newMouseEvent(hsee.types.leftMouseDown, point):post()
-end
-
 local function switchSpace(dir)
-  hs.eventtap.keyStroke({"ctrl", "fn"}, dir, 0) -- fn is for macOS to register the keys
+  hs.eventtap.keyStroke({"ctrl", "fn"}, dir, 0)
 end
 
-local function waitForWindowMoved(win, initialSpace, dragPoint, prevCursor)
+-- Returns the adjacent space ID, or nil if already at the boundary
+local function getTargetSpace(userSpaces, currentSpace, dir)
+  for i, id in ipairs(userSpaces) do
+    if id == currentSpace then
+      return userSpaces[dir == "right" and i + 1 or i - 1]
+    end
+  end
+  return nil
+end
+
+local function safeDragPoint(win)
+  local zbr = win:zoomButtonRect()
+  if not zbr then return nil end
+  local pt = hs.geometry(zbr):move({15, -1}).topleft
+  -- Clamp below the menu bar so the event lands inside the window
+  local sf = win:screen():frame()
+  pt.y = math.max(sf.y + 2, pt.y)
+  return pt
+end
+
+local function performMove(win, initialSpace, dir)
+  local prevCursor = hs.mouse.getRelativePosition()
+  local dragPoint  = safeDragPoint(win)
+  if not dragPoint then
+    moveInProgress = false
+    return
+  end
+
+  -- Grab the window: mouseDown on title bar, then settle before switching space.
+  -- Drag apps also need a zero-delta mouseDragged to engage their grab state.
+  hsee.newMouseEvent(hsee.types.leftMouseDown, dragPoint):post()
+  if appNeedsDrag(win) then
+    hs.timer.usleep(GRAB_US)
+    hsee.newMouseEvent(hsee.types.leftMouseDragged, dragPoint):post()
+  end
+  hs.timer.usleep(SWITCH_US)
+
+  switchSpace(dir)
+
+  local deadline = hst.secondsSinceEpoch() + POLL_TIMEOUT
   hst.waitUntil(
     function()
+      if hst.secondsSinceEpoch() >= deadline then return true end
       local cur = spaces.windowSpaces(win)
-      return cur and cur[1] ~= initialSpace
+      return cur and cur[1] and cur[1] ~= initialSpace
     end,
     function()
-      hs.timer.usleep(10000)
+      hs.timer.usleep(RELEASE_US)
       hsee.newMouseEvent(hsee.types.leftMouseUp, dragPoint):post()
       hs.mouse.setRelativePosition(prevCursor)
+      moveInProgress = false
     end,
-    0.05
+    POLL_INTERVAL
   )
 end
 
-local function canMoveWindow(userSpaces, initialSpace, dir)
-  if not userSpaces or #userSpaces == 0 or not initialSpace then return false end
-
-  local first, last = userSpaces[1], userSpaces[#userSpaces]
-  if (dir == "right" and initialSpace == last) or (dir == "left" and initialSpace == first) then
-    return false
-  end
-
-  return true
-end
-
 function obj.moveWindowOneSpace(dir)
+  if moveInProgress then return end
+
   local win = getValidWindow()
   if not win or windowIsSticky(win) then return end
 
-  local userSpaces = getUserSpaces(win)
+  local userSpaces    = getUserSpaces(win)
   local initialSpaces = spaces.windowSpaces(win)
-  local initialSpace = initialSpaces and initialSpaces[1] or nil
+  local initialSpace  = initialSpaces and initialSpaces[1]
+  if not initialSpace or not userSpaces then return end
 
-  if not canMoveWindow(userSpaces, initialSpace, dir) then return end
+  local targetSpace = getTargetSpace(userSpaces, initialSpace, dir)
+  if not targetSpace then return end
 
-  local prevCursor = hs.mouse.getRelativePosition()
-  local dragPoint = safeDragPoint(win)
-
-  if appNeedsDrag(win) then
-    simulateNoMoveDrag(dragPoint)
-  else
-    simulateSimpleMouseDown(dragPoint)
-  end
-
-  switchSpace(dir)
-  waitForWindowMoved(win, initialSpace, dragPoint, prevCursor)
+  moveInProgress = true
+  performMove(win, initialSpace, dir)
 end
 
 function obj:start()
