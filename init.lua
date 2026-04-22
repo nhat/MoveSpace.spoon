@@ -12,16 +12,14 @@ local spaces = require "hs.spaces"
 local hsee = hs.eventtap.event
 local hst  = hs.timer
 
--- Apps that use NSWindowStyleMaskFullSizeContentView: content fills the entire
--- window including the "title bar" area, so macOS window server never sees a
--- synthetic mouseDown there as a title bar grab. Drag simulation is hopeless for
--- these; use hs.spaces.moveWindowToSpace (direct window-server API) instead.
-local SPACES_API_IDS = {
+-- Apps where the movable region is BELOW the traffic lights, not at their Y level.
+-- safeDragPoint clicks just below the zoom button's bottom edge for these.
+local BELOW_BTN_IDS = {
   ["com.googlecode.iterm2"] = true,
 }
 
--- Apps that need a zero-delta mouseDragged to engage their custom grab state
--- before the space switch fires (Electron IPC / JetBrains event loop latency).
+-- Apps that need a zero-delta mouseDragged to engage their grab state before
+-- the space switch fires (Electron IPC / JetBrains event loop latency).
 local DRAG_BUNDLE_IDS = {
   ["com.jetbrains.intellij"]    = true,
   ["com.jetbrains.WebStorm"]    = true,
@@ -31,6 +29,7 @@ local DRAG_BUNDLE_IDS = {
   ["com.jetbrains.DataGrip"]    = true,
   ["com.jetbrains.RubyMine"]    = true,
   ["com.tinyspeck.slackmacgap"] = true,
+  ["com.googlecode.iterm2"]     = true,
 }
 
 local GRAB_US       = 60000  -- µs between mouseDown and mouseDragged (drag apps only)
@@ -72,7 +71,6 @@ local function switchSpace(dir)
   hs.eventtap.keyStroke({"ctrl", "fn"}, dir, 0)
 end
 
--- Returns the adjacent space ID, or nil if already at the boundary
 local function getTargetSpace(userSpaces, currentSpace, dir)
   for i, id in ipairs(userSpaces) do
     if id == currentSpace then
@@ -85,14 +83,17 @@ end
 local function safeDragPoint(win)
   local zbr = win:zoomButtonRect()
   if not zbr then return nil end
-  local pt = hs.geometry(zbr):move({15, -1}).topleft
+  local bundleID = getBundleID(win)
+  if bundleID and BELOW_BTN_IDS[bundleID] then
+    -- Click just below the traffic lights where the window is actually movable
+    return {x = zbr.x + zbr.w + 20, y = zbr.y + zbr.h + 8}
+  end
   local sf = win:screen():frame()
+  local pt = hs.geometry(zbr):move({15, -1}).topleft
   pt.y = math.max(sf.y + 2, pt.y)
   return pt
 end
 
--- Mouse-drag path: used for standard apps and Electron/JetBrains/Slack.
--- Relies on macOS window server detecting the mouseDown as a title bar grab.
 local function performMove(win, initialSpace, dir)
   local prevCursor = hs.mouse.getRelativePosition()
   local dragPoint  = safeDragPoint(win)
@@ -128,14 +129,6 @@ local function performMove(win, initialSpace, dir)
   )
 end
 
--- Direct API path: for apps where the window server has no exposed title bar
--- region (NSWindowStyleMaskFullSizeContentView). No mouse simulation needed.
-local function apiMove(win, targetSpace, dir)
-  local ok = spaces.moveWindowToSpace(win, targetSpace)
-  if ok then switchSpace(dir) end
-  moveInProgress = false
-end
-
 function obj.moveWindowOneSpace(dir)
   if moveInProgress then return end
 
@@ -150,14 +143,8 @@ function obj.moveWindowOneSpace(dir)
   local targetSpace = getTargetSpace(userSpaces, initialSpace, dir)
   if not targetSpace then return end
 
-  local bundleID = getBundleID(win)
   moveInProgress = true
-
-  if bundleID and SPACES_API_IDS[bundleID] then
-    apiMove(win, targetSpace, dir)
-  else
-    performMove(win, initialSpace, dir)
-  end
+  performMove(win, initialSpace, dir)
 end
 
 function obj:start()
