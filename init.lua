@@ -85,10 +85,16 @@ local function safeDragPoint(win)
   if not zbr then return nil end
   local bundleID = getBundleID(win)
   if bundleID and BELOW_BTN_IDS[bundleID] then
-    -- Click just below the traffic lights where the window is actually movable.
-    -- +2 keeps the point inside the title bar; +8 overshoots into the content
-    -- area, giving keyboard focus to the terminal which swallows our keystroke.
-    return {x = zbr.x + zbr.w + 20, y = zbr.y + zbr.h + 2}
+    local frame = win:frame()
+    if not frame then return nil end
+    -- Three test points told us the exact layout for iTerm2's title bar:
+    --   zbr.y - 1         → non-draggable upper strip (drag doesn't engage)
+    --   zbr.y + zbr.h + 2 → passthrough (falls through to the window behind)
+    --   zbr.y + zbr.h + 8 → terminal content (terminal steals keyboard focus)
+    -- So the draggable region is in the lower half of the title bar, between
+    -- the traffic lights' center and the top of the content area.
+    -- frame.y + 14 lands there reliably regardless of exact title bar height.
+    return {x = zbr.x + zbr.w + 50, y = frame.y + 14}
   end
   local sf = win:screen():frame()
   local pt = hs.geometry(zbr):move({15, -1}).topleft
