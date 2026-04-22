@@ -85,8 +85,10 @@ local function safeDragPoint(win)
   if not zbr then return nil end
   local bundleID = getBundleID(win)
   if bundleID and BELOW_BTN_IDS[bundleID] then
-    -- Click just below the traffic lights where the window is actually movable
-    return {x = zbr.x + zbr.w + 20, y = zbr.y + zbr.h + 8}
+    -- Click just below the traffic lights where the window is actually movable.
+    -- +2 keeps the point inside the title bar; +8 overshoots into the content
+    -- area, giving keyboard focus to the terminal which swallows our keystroke.
+    return {x = zbr.x + zbr.w + 20, y = zbr.y + zbr.h + 2}
   end
   local sf = win:screen():frame()
   local pt = hs.geometry(zbr):move({15, -1}).topleft
