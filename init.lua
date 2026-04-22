@@ -22,6 +22,7 @@ local DRAG_BUNDLE_IDS = {
   ["com.jetbrains.DataGrip"]    = true,
   ["com.jetbrains.RubyMine"]    = true,
   ["com.tinyspeck.slackmacgap"] = true,
+  ["com.googlecode.iterm2"]     = true,
 }
 
 -- Standard apps only need mouseDown held, but macOS must process it before the

@@ -37,6 +37,7 @@ These bundle IDs trigger the drag-based move path:
 - DataGrip
 - RubyMine
 - Slack
+- iTerm2
 
 All other apps use the faster direct `moveToSpace` approach.
 
