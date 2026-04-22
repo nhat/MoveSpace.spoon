@@ -12,7 +12,16 @@ local spaces = require "hs.spaces"
 local hsee = hs.eventtap.event
 local hst  = hs.timer
 
--- Apps that need a zero-delta mouseDragged event to register the grab state
+-- Apps that use NSWindowStyleMaskFullSizeContentView: content fills the entire
+-- window including the "title bar" area, so macOS window server never sees a
+-- synthetic mouseDown there as a title bar grab. Drag simulation is hopeless for
+-- these; use hs.spaces.moveWindowToSpace (direct window-server API) instead.
+local SPACES_API_IDS = {
+  ["com.googlecode.iterm2"] = true,
+}
+
+-- Apps that need a zero-delta mouseDragged to engage their custom grab state
+-- before the space switch fires (Electron IPC / JetBrains event loop latency).
 local DRAG_BUNDLE_IDS = {
   ["com.jetbrains.intellij"]    = true,
   ["com.jetbrains.WebStorm"]    = true,
@@ -22,11 +31,8 @@ local DRAG_BUNDLE_IDS = {
   ["com.jetbrains.DataGrip"]    = true,
   ["com.jetbrains.RubyMine"]    = true,
   ["com.tinyspeck.slackmacgap"] = true,
-  ["com.googlecode.iterm2"]     = true,
 }
 
--- Standard apps only need mouseDown held, but macOS must process it before the
--- space switch fires — SWITCH_US is the gap that prevents the timing race.
 local GRAB_US       = 60000  -- µs between mouseDown and mouseDragged (drag apps only)
 local SWITCH_US     = 80000  -- µs between grab-complete and switchSpace (all apps)
 local RELEASE_US    = 20000  -- µs before mouseUp after window confirmed moved
@@ -35,9 +41,9 @@ local POLL_TIMEOUT  = 2.0    -- s: give up if window hasn't moved
 
 local moveInProgress = false
 
-local function appNeedsDrag(win)
+local function getBundleID(win)
   local app = win and win:application()
-  return app and DRAG_BUNDLE_IDS[app:bundleID()] or false
+  return app and app:bundleID()
 end
 
 local function windowIsSticky(win)
@@ -80,12 +86,13 @@ local function safeDragPoint(win)
   local zbr = win:zoomButtonRect()
   if not zbr then return nil end
   local pt = hs.geometry(zbr):move({15, -1}).topleft
-  -- Clamp below the menu bar so the event lands inside the window
   local sf = win:screen():frame()
   pt.y = math.max(sf.y + 2, pt.y)
   return pt
 end
 
+-- Mouse-drag path: used for standard apps and Electron/JetBrains/Slack.
+-- Relies on macOS window server detecting the mouseDown as a title bar grab.
 local function performMove(win, initialSpace, dir)
   local prevCursor = hs.mouse.getRelativePosition()
   local dragPoint  = safeDragPoint(win)
@@ -94,10 +101,9 @@ local function performMove(win, initialSpace, dir)
     return
   end
 
-  -- Grab the window: mouseDown on title bar, then settle before switching space.
-  -- Drag apps also need a zero-delta mouseDragged to engage their grab state.
+  local bundleID = getBundleID(win)
   hsee.newMouseEvent(hsee.types.leftMouseDown, dragPoint):post()
-  if appNeedsDrag(win) then
+  if bundleID and DRAG_BUNDLE_IDS[bundleID] then
     hs.timer.usleep(GRAB_US)
     hsee.newMouseEvent(hsee.types.leftMouseDragged, dragPoint):post()
   end
@@ -122,6 +128,14 @@ local function performMove(win, initialSpace, dir)
   )
 end
 
+-- Direct API path: for apps where the window server has no exposed title bar
+-- region (NSWindowStyleMaskFullSizeContentView). No mouse simulation needed.
+local function apiMove(win, targetSpace, dir)
+  local ok = spaces.moveWindowToSpace(win, targetSpace)
+  if ok then switchSpace(dir) end
+  moveInProgress = false
+end
+
 function obj.moveWindowOneSpace(dir)
   if moveInProgress then return end
 
@@ -136,8 +150,14 @@ function obj.moveWindowOneSpace(dir)
   local targetSpace = getTargetSpace(userSpaces, initialSpace, dir)
   if not targetSpace then return end
 
+  local bundleID = getBundleID(win)
   moveInProgress = true
-  performMove(win, initialSpace, dir)
+
+  if bundleID and SPACES_API_IDS[bundleID] then
+    apiMove(win, targetSpace, dir)
+  else
+    performMove(win, initialSpace, dir)
+  end
 end
 
 function obj:start()

@@ -7,7 +7,7 @@ A [Hammerspoon](https://www.hammerspoon.org/) Spoon that moves the focused windo
 - `Shift+Ctrl+2` — move focused window one Space to the right
 - `Shift+Ctrl+1` — move focused window one Space to the left
 - Silently skips if already at the first or last Space
-- Handles apps that require a drag workaround (Electron, JetBrains IDEs, Slack) — these apps don't respond to the standard `moveToSpace` API, so the Spoon simulates a title-bar drag instead
+- Handles three categories of apps differently (see below)
 - Restores cursor position after a drag-based move
 
 ## Requirements
@@ -25,21 +25,23 @@ hs.loadSpoon("MoveSpace")
 spoon.MoveSpace:start()
 ```
 
-## Supported Apps (Drag Workaround)
+## How It Works
 
-These bundle IDs trigger the drag-based move path:
+There are three move strategies depending on the app:
 
-- IntelliJ IDEA
-- WebStorm
-- PyCharm
-- CLion
-- Rider
-- DataGrip
-- RubyMine
+### Direct API (`SPACES_API_IDS`)
+Apps that use `NSWindowStyleMaskFullSizeContentView` embed their content into the title bar area. The macOS window server has no exposed title bar region for these apps, so synthetic mouse events can never engage its window-drag tracking. Instead, `hs.spaces.moveWindowToSpace` moves the window directly at the API level.
+
+- **iTerm2**
+
+### Drag simulation with mouseDragged (`DRAG_BUNDLE_IDS`)
+Electron and JetBrains apps have custom event loops that need an explicit `leftMouseDragged` event (at the same point as `leftMouseDown`) to register the window as grabbed before the space switch fires.
+
+- IntelliJ IDEA, WebStorm, PyCharm, CLion, Rider, DataGrip, RubyMine
 - Slack
-- iTerm2
 
-All other apps use the faster direct `moveToSpace` approach.
+### Standard drag simulation (all other apps)
+A `leftMouseDown` on the title bar held for 80ms is enough for macOS to track the window during a space switch.
 
 ## API
 
