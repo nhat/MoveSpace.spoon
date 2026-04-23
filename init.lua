@@ -85,11 +85,16 @@ local function safeDragPoint(win)
   if not zbr then return nil end
   local bundleID = getBundleID(win)
   if bundleID and BELOW_BTN_IDS[bundleID] then
-    -- Click in the narrow gap between the green button's right edge and the
-    -- first tab. +8 stays in that gap; larger offsets land on the tab itself.
-    -- Y at the vertical center of the traffic lights matches where the user
-    -- confirmed manual dragging works.
-    return {x = zbr.x + zbr.w + 8, y = zbr.y + math.floor(zbr.h / 2)}
+    local frame = win:frame()
+    if not frame then return nil end
+    -- zoomButtonRect returns window-relative coordinates for iTerm2 (not screen
+    -- coordinates like other apps). zbr.y ≈ 24 was being used as screen y ≈ 24
+    -- (menu bar area), making the cursor fly up past the window every time.
+    -- Add the frame origin to convert to screen coordinates.
+    return {
+      x = frame.x + zbr.x + zbr.w + 5,
+      y = frame.y + zbr.y + math.floor(zbr.h / 2),
+    }
   end
   local sf = win:screen():frame()
   local pt = hs.geometry(zbr):move({15, -1}).topleft
