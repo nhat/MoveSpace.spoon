@@ -32,7 +32,7 @@ local APP_CONFIG = {
 
 local GRAB_US       = 60000  -- µs between mouseDown and mouseDragged (drag apps only)
 local SWITCH_US     = 80000  -- µs between grab-complete and switchSpace (all apps)
-local RELEASE_US    = 20000  -- µs before mouseUp after window confirmed moved
+local RELEASE_US    = 2000   -- µs before mouseUp after window confirmed moved
 local POLL_INTERVAL = 0.05   -- s: polling frequency for window-moved check
 local POLL_TIMEOUT  = 2.0    -- s: give up if window hasn't moved
 
