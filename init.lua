@@ -85,16 +85,13 @@ local function safeDragPoint(win)
   if not zbr then return nil end
   local bundleID = getBundleID(win)
   if bundleID and BELOW_BTN_IDS[bundleID] then
-    -- zbr is in screen coords. frame.y is the *content area* top, not the
-    -- window visual top — adding it to zbr would double-count.
-    -- The first tab starts immediately after the green button's right edge
-    -- (zbr.x + zbr.w), so clicking to the right hits the tab, not a drag area.
-    -- The draggable strip is the ~7px between the traffic lights bottom (zbr.y
-    -- + zbr.h) and the content area (frame.y), directly under the green button.
-    return {
+    local frame = win:frame()
+    if not frame then return nil end
+    local pt = {
       x = zbr.x + math.floor(zbr.w / 2),
-      y = zbr.y + zbr.h + 2,
+      y = zbr.y + zbr.h + 15,
     }
+    return pt
   end
   local sf = win:screen():frame()
   local pt = hs.geometry(zbr):move({15, -1}).topleft
