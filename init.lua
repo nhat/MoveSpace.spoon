@@ -33,8 +33,8 @@ local APP_CONFIG = {
 local GRAB_US       = 60000  -- µs between mouseDown and mouseDragged (drag apps only)
 local SWITCH_US     = 80000  -- µs between grab-complete and switchSpace (all apps)
 local RELEASE_US    = 2000   -- µs before mouseUp after window confirmed moved
-local POLL_INTERVAL = 0.05   -- s: polling frequency for window-moved check
-local POLL_TIMEOUT  = 2.0    -- s: give up if window hasn't moved
+local POLL_INTERVAL = 0.02   -- s: polling frequency for window-moved check
+local POLL_TIMEOUT  = 1.5    -- s: give up if window hasn't moved
 
 local moveInProgress = false
 
@@ -96,14 +96,20 @@ local function performMove(win, cfg, initialSpace, dir)
     return
   end
 
-  hsee.newMouseEvent(hsee.types.leftMouseDown, dragPoint):post()
-  if cfg and cfg.preDrag then
-    hs.timer.usleep(GRAB_US)
-    hsee.newMouseEvent(hsee.types.leftMouseDragged, dragPoint):post()
-  end
-  hs.timer.usleep(SWITCH_US)
+  local ok = pcall(function()
+    hsee.newMouseEvent(hsee.types.leftMouseDown, dragPoint):post()
+    if cfg and cfg.preDrag then
+      hs.timer.usleep(GRAB_US)
+      hsee.newMouseEvent(hsee.types.leftMouseDragged, dragPoint):post()
+    end
+    hs.timer.usleep(SWITCH_US)
+    switchSpace(dir)
+  end)
 
-  switchSpace(dir)
+  if not ok then
+    moveInProgress = false
+    return
+  end
 
   local deadline = hst.secondsSinceEpoch() + POLL_TIMEOUT
   hst.waitUntil(
@@ -113,9 +119,11 @@ local function performMove(win, cfg, initialSpace, dir)
       return cur and cur[1] and cur[1] ~= initialSpace
     end,
     function()
-      hs.timer.usleep(RELEASE_US)
-      hsee.newMouseEvent(hsee.types.leftMouseUp, dragPoint):post()
-      hs.mouse.setRelativePosition(prevCursor)
+      pcall(function()
+        hs.timer.usleep(RELEASE_US)
+        hsee.newMouseEvent(hsee.types.leftMouseUp, dragPoint):post()
+        hs.mouse.setRelativePosition(prevCursor)
+      end)
       moveInProgress = false
     end,
     POLL_INTERVAL
