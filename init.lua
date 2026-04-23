@@ -12,24 +12,22 @@ local spaces = require "hs.spaces"
 local hsee = hs.eventtap.event
 local hst  = hs.timer
 
--- Apps where the movable region is BELOW the traffic lights, not at their Y level.
--- safeDragPoint clicks just below the zoom button's bottom edge for these.
-local BELOW_BTN_IDS = {
-  ["com.googlecode.iterm2"] = true,
-}
-
--- Apps that need a zero-delta mouseDragged to engage their grab state before
--- the space switch fires (Electron IPC / JetBrains event loop latency).
-local DRAG_BUNDLE_IDS = {
-  ["com.jetbrains.intellij"]    = true,
-  ["com.jetbrains.WebStorm"]    = true,
-  ["com.jetbrains.PyCharm"]     = true,
-  ["com.jetbrains.CLion"]       = true,
-  ["com.jetbrains.Rider"]       = true,
-  ["com.jetbrains.DataGrip"]    = true,
-  ["com.jetbrains.RubyMine"]    = true,
-  ["com.tinyspeck.slackmacgap"] = true,
-  ["com.googlecode.iterm2"]     = true,
+-- Per-app drag configuration.
+-- btnYOffset: drag point is horizontally centered on the zoom button, this many
+--   px below its bottom edge (zbr.y + zbr.h + offset). Omit to use the default
+--   strategy: 15px right and 1px above the zoom button top-left.
+-- preDrag: fire a zero-delta mouseDragged before the space switch to engage the
+--   app's grab state (needed for Electron IPC / JetBrains event loop latency).
+local APP_CONFIG = {
+  ["com.googlecode.iterm2"]     = { btnYOffset = 15, preDrag = true },
+  ["com.jetbrains.intellij"]    = { preDrag = true },
+  ["com.jetbrains.WebStorm"]    = { preDrag = true },
+  ["com.jetbrains.PyCharm"]     = { preDrag = true },
+  ["com.jetbrains.CLion"]       = { preDrag = true },
+  ["com.jetbrains.Rider"]       = { preDrag = true },
+  ["com.jetbrains.DataGrip"]    = { preDrag = true },
+  ["com.jetbrains.RubyMine"]    = { preDrag = true },
+  ["com.tinyspeck.slackmacgap"] = { preDrag = true },
 }
 
 local GRAB_US       = 60000  -- µs between mouseDown and mouseDragged (drag apps only)
@@ -43,11 +41,6 @@ local moveInProgress = false
 local function getBundleID(win)
   local app = win and win:application()
   return app and app:bundleID()
-end
-
-local function windowIsSticky(win)
-  local ids = spaces.windowSpaces(win)
-  return type(ids) == "table" and #ids > 1
 end
 
 local function getUserSpaces(win)
@@ -80,18 +73,14 @@ local function getTargetSpace(userSpaces, currentSpace, dir)
   return nil
 end
 
-local function safeDragPoint(win)
+local function safeDragPoint(win, cfg)
   local zbr = win:zoomButtonRect()
   if not zbr then return nil end
-  local bundleID = getBundleID(win)
-  if bundleID and BELOW_BTN_IDS[bundleID] then
-    local frame = win:frame()
-    if not frame then return nil end
-    local pt = {
+  if cfg and cfg.btnYOffset then
+    return {
       x = zbr.x + math.floor(zbr.w / 2),
-      y = zbr.y + zbr.h + 15,
+      y = zbr.y + zbr.h + cfg.btnYOffset,
     }
-    return pt
   end
   local sf = win:screen():frame()
   local pt = hs.geometry(zbr):move({15, -1}).topleft
@@ -99,17 +88,16 @@ local function safeDragPoint(win)
   return pt
 end
 
-local function performMove(win, initialSpace, dir)
+local function performMove(win, cfg, initialSpace, dir)
   local prevCursor = hs.mouse.getRelativePosition()
-  local dragPoint  = safeDragPoint(win)
+  local dragPoint  = safeDragPoint(win, cfg)
   if not dragPoint then
     moveInProgress = false
     return
   end
 
-  local bundleID = getBundleID(win)
   hsee.newMouseEvent(hsee.types.leftMouseDown, dragPoint):post()
-  if bundleID and DRAG_BUNDLE_IDS[bundleID] then
+  if cfg and cfg.preDrag then
     hs.timer.usleep(GRAB_US)
     hsee.newMouseEvent(hsee.types.leftMouseDragged, dragPoint):post()
   end
@@ -138,18 +126,20 @@ function obj.moveWindowOneSpace(dir)
   if moveInProgress then return end
 
   local win = getValidWindow()
-  if not win or windowIsSticky(win) then return end
+  if not win then return end
 
-  local userSpaces    = getUserSpaces(win)
   local initialSpaces = spaces.windowSpaces(win)
-  local initialSpace  = initialSpaces and initialSpaces[1]
-  if not initialSpace or not userSpaces then return end
+  if type(initialSpaces) ~= "table" or #initialSpaces > 1 then return end
+  local initialSpace = initialSpaces[1]
 
-  local targetSpace = getTargetSpace(userSpaces, initialSpace, dir)
-  if not targetSpace then return end
+  local userSpaces = getUserSpaces(win)
+  if not userSpaces then return end
 
+  if not getTargetSpace(userSpaces, initialSpace, dir) then return end
+
+  local cfg = APP_CONFIG[getBundleID(win)]
   moveInProgress = true
-  performMove(win, initialSpace, dir)
+  performMove(win, cfg, initialSpace, dir)
 end
 
 function obj:start()
