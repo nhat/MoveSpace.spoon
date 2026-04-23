@@ -85,15 +85,15 @@ local function safeDragPoint(win)
   if not zbr then return nil end
   local bundleID = getBundleID(win)
   if bundleID and BELOW_BTN_IDS[bundleID] then
-    local frame = win:frame()
-    if not frame then return nil end
-    -- zoomButtonRect returns window-relative coordinates for iTerm2 (not screen
-    -- coordinates like other apps). zbr.y ≈ 24 was being used as screen y ≈ 24
-    -- (menu bar area), making the cursor fly up past the window every time.
-    -- Add the frame origin to convert to screen coordinates.
+    -- zbr is in screen coords. frame.y is the *content area* top, not the
+    -- window visual top — adding it to zbr would double-count.
+    -- The first tab starts immediately after the green button's right edge
+    -- (zbr.x + zbr.w), so clicking to the right hits the tab, not a drag area.
+    -- The draggable strip is the ~7px between the traffic lights bottom (zbr.y
+    -- + zbr.h) and the content area (frame.y), directly under the green button.
     return {
-      x = frame.x + zbr.x + zbr.w + 5,
-      y = frame.y + zbr.y + math.floor(zbr.h / 2),
+      x = zbr.x + math.floor(zbr.w / 2),
+      y = zbr.y + zbr.h + 2,
     }
   end
   local sf = win:screen():frame()
